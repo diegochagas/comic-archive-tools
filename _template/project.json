@@ -1,0 +1,20 @@
+{
+  "title": "MyComic",
+  "display_name": "My Comic — full name",
+  "issues": ["1"],
+  "script_pattern": "MyComic{issue}.md",
+  "page_header_regex": "^=== PAGE (\\d+)\\s*[—-]\\s*(.*?)\\s*===\\s*$",
+  "aspect": "2:3",
+  "language": "pt-BR",
+  "lettering": "manual",
+  "style_refs": {
+    "cover": [],
+    "default": []
+  },
+  "cbz": {
+    "max_height": 2048,
+    "folder": "MyComic{issue}",
+    "page_name": "page{issue}{page:02d}.jpg",
+    "out_name": "MyComic{issue}.cbz"
+  }
+}

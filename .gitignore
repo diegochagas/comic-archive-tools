@@ -1,0 +1,16 @@
+# Generated comic projects (scripts, refs, jobs, work-in-progress renders, output .cbz)
+# — large binary/generated content, not meant for version control.
+projects/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor/local
+*.swp
+.env

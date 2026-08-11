@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "skills": {
+    "higgsfield-brandkit": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-brandkit/SKILL.md",
+      "computedHash": "3c5b83c84675165be9395e01b574b92813385187912bf07cf9e1dceb4d0b67b1"
+    },
+    "higgsfield-generate": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-generate/SKILL.md",
+      "computedHash": "28871703b1a3a3cbedbf174330babcc257735a7707becd338c23d72ae5aaa2b8"
+    },
+    "higgsfield-marketplace-cards": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-marketplace-cards/SKILL.md",
+      "computedHash": "7a08d374b9f962737fb8c8ff7f8e323fc4d2ab02281b6723c4631146b4892701"
+    },
+    "higgsfield-product-photoshoot": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-product-photoshoot/SKILL.md",
+      "computedHash": "11ed02298e09d067f96b7347d34e1dea8abb3ca058f714ac3cf70602176a4263"
+    },
+    "higgsfield-soul-id": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-soul-id/SKILL.md",
+      "computedHash": "ff8418fe5fe936d65898601e28bb282c4c47c0fc0cd5c3e54e1c75565609683a"
+    },
+    "higgsfield-video-explainer": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-video-explainer/SKILL.md",
+      "computedHash": "d8643f2e983acde62e2e2d0c047912f295851dff5f967d7214fbaedadc3bc5ad"
+    },
+    "higgsfield-websites": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-websites/SKILL.md",
+      "computedHash": "dafe6953f4b0e34b4dffddb39783f81d117481b193c9a141281f20c7746daf11"
+    },
+    "higgsfield-youtube-thumbnail": {
+      "source": "higgsfield-ai/skills",
+      "sourceType": "github",
+      "skillPath": "higgsfield-youtube-thumbnail/SKILL.md",
+      "computedHash": "aade6ad4febf121bfd20feefb21c4e838043ac3d08edb33ea9e2574569d4b381"
+    }
+  }
+}
