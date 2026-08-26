@@ -1,30 +1,54 @@
 ---
-name: clean-manga-text
-description: Convert every manga/doujinshi page image in a folder to a layered PSD (layer "Original" + layer "Cleaned") where the Cleaned layer has CJK text removed — but ONLY text sitting on a plain single-color background (white or black speech bubbles, boxes, margins). Text drawn over artwork is deliberately left untouched. Uses an ONNX text-detection model plus headless GIMP.
+name: manga-letterer
+description: Convert every manga/doujinshi page image in a folder to a layered PSD ready for lettering — layer "Original" + layer "Cleaned" (ALL detected CJK text erased, and ONLY text; the model's text-region heads keep art like borders/hatching safe from false positives) + one editable Photoshop paragraph text box per detected text region, pre-filled with CCWildWords-Regular placeholder text. Each erased region is filled with the predominant color around it (exact solid color on plain backgrounds of any color — white, black, grey, red...; inpainted from surrounding pixels over art). Uses an ONNX text-detection model plus headless GIMP for PSD assembly, then ag-psd (Node) to write real Photoshop Type-tool paragraph boxes GIMP itself cannot export. Anything worth keeping is restored manually from the Original layer.
 ---
 
-# Clean manga text → layered PSDs (plain backgrounds only)
+# manga-letterer — clean manga pages into letter-ready layered PSDs
 
-For every image in a folder, produce a PSD with two layers: **Original**
-(untouched scan, bottom) and **Cleaned** (top). On the Cleaned layer, remove text
-that sits on a plain single color — dark text on white (typical speech bubbles)
-or light text on black. **Text over drawings — sound effects across art, artist
-signatures, captions crossed by linework — is left as-is by design**: automated
-healing over art proved unreliable (user decision, 2026-08-25). Every page gets a
-PSD even if nothing is cleaned (two identical layers), so the folder converts
+For every image in a folder, produce a PSD with: **Original** (untouched
+scan, bottom), **Cleaned** (top of the raster stack) with **every detected
+text stroke erased — and only text** (stroke detections are gated by the
+model's own text-block boxes and text-line map, so stroke-like false
+positives on art — decorative borders, hatching, screentone — stay
+untouched), and one **empty, editable Photoshop paragraph text box per
+detected text region**, positioned and sized to that region, ready to type a
+translation into with Photoshop's own Type tool. No manual review step for
+the cleaning. Each erased region is filled with the predominant color around
+it:
+
+- surroundings are one plain color (white/black bubbles, grey caption boxes,
+  colored banners...) → filled with that exact sampled color;
+- surroundings are busy (art, screentone, gradients) → inpainted from the
+  surrounding pixels (results over art are imperfect by nature).
+
+**Restoration is manual by design** (user decision, 2026-08-26, superseding the
+earlier leave-text-over-art policy): if the automated erase damaged something
+the user wants back (a signature, an SFX crossed by the gate), they copy that
+area from the Original layer themselves in an editor. Every page gets a PSD
+even if nothing was detected (two identical layers), so the folder converts
 completely.
 
-Division of labor — do not regress this:
+Division of labor:
 
-- **The model finds the pixels.** `comic-text-detector` (ONNX) outputs a
-  pixel-accurate mask of text strokes. Only masked pixels are ever modified —
-  never fill bare rectangles or hand-guessed tight boxes (v1 did; it left white
-  squares and bit chunks out of figures).
-- **You (Claude) provide the semantics.** The model over-detects (flags art as
-  text). You view each page and draw generous "allow boxes" around text blocks
-  that qualify (boxes may safely overlap art — only detected strokes inside them
-  get touched). Anything not covered by a box stays untouched.
-- **GIMP does the pixel work** (masked fills, PSD export).
+- **`detect_text.py` does everything pixel-level.** The comic-text-detector
+  ONNX model finds text strokes and text regions (block boxes + line map);
+  the script erases strokes inside text regions only, classifies each
+  component's surroundings, solid-fills or inpaints it, and writes the fully
+  cleaned page image. Only detected stroke pixels are ever modified. The same
+  text-block boxes also become the paragraph text box positions in step 3.
+- **GIMP assembles the raster layers**: stacks Cleaned over Original and
+  exports PSD + JPG preview. GIMP's own PSD exporter rasterizes GIMP text
+  layers on save — it cannot write native Photoshop text layers, so it never
+  touches text.
+- **`add_text_layers.mjs` (Node + ag-psd) writes the real Photoshop text
+  layers** the GIMP step can't: one native "paragraph" (word-wrap box) Type
+  layer per detected text block, empty and positioned exactly over that
+  block, stacked above Cleaned. This rewrites the PSD's binary layer records
+  directly; it round-trips the existing raster layers byte-exact (verified
+  pixel-for-pixel) and only appends new layers.
+- **You (Claude) orchestrate and spot-check**: run the scripts in batches,
+  glance at previews/overlays for gross failures (e.g. a wrong fill color, a
+  page that failed to process), and report what was touched.
 
 ## Requirements (all already installed)
 
@@ -32,7 +56,10 @@ Division of labor — do not regress this:
 - This skill's venv: `<skill>/venv/bin/python` (onnxruntime, opencv, numpy).
 - Model: `<skill>/models/comictextdetector.pt.onnx` (re-download from
   manga-image-translator GitHub release `beta-0.3` if missing).
-- Scripts: `<skill>/scripts/detect_text.py`, `<skill>/scripts/gimp_clean.py`.
+- Node.js + `<skill>/node_modules/ag-psd` (installed by `setup.sh`; run it
+  again if `node_modules` is missing).
+- Scripts: `<skill>/scripts/detect_text.py`, `<skill>/scripts/gimp_clean.py`,
+  `<skill>/scripts/add_text_layers.mjs`.
 
 ## Inputs
 
@@ -45,63 +72,43 @@ Division of labor — do not regress this:
 
 ### 0. Setup and resume
 
-- List images sorted; track verified pages in `<output>/progress.json`
+- List images sorted; track finished pages in `<output>/progress.json`
   (`{"done": ["010", ...]}`); skip those on re-invocation.
-- Work in chunks of ~5 pages; for big folders report progress as you go
-  (~1 min per page).
+- Work in chunks of ~8 pages; for big folders report progress as you go.
 
-### 1. Detect text strokes
+### 1. Detect and erase text
 
 ```bash
 <skill>/venv/bin/python <skill>/scripts/detect_text.py <output_dir> <img1> <img2> ...
 ```
 
-Per page this writes into `<output>/detect/`: `<stem>_mask.png` (union stroke
-mask — what the cleaner uses), `<stem>_overlay.jpg` (page tinted where strokes
-were detected: red = classified on-plain-white, blue = on-plain-black, green =
-over art; colors are only a hint), and `<stem>_detect.json` (component bboxes in
-page pixel coords).
+Only actual text is touched: the model's text-block boxes and text-line map
+gate its stroke segmentation, so stroke-like false positives on art
+(ornamental borders, hatching, screentone) are left untouched automatically.
 
-### 2. Review each overlay (your judgment)
+Per page this writes into `<output>/detect/`:
 
-Read the overlay next to the original. For each real text block decide whether it
-qualifies, **at whole-block level**:
+- `<stem>_cleaned.png` — the page with all text erased (becomes the PSD's
+  Cleaned layer)
+- `<stem>_mask.png` — union mask of every touched pixel
+- `<stem>_overlay.jpg` — original tinted where strokes were detected
+  (red = solid color fill, green = inpainted, yellow = detected strokes
+  outside any text region — left untouched)
+- `<stem>_detect.json` — text block boxes, erased component bboxes, method,
+  and sampled `bg_color` hex for solid fills
 
-- Block entirely on plain white → `fill_white`. Entirely on plain black →
-  `fill_black`.
-- If ANY art linework runs under or through the block (hair strands, rays,
-  foliage, screentone drawings), or the block is a signature/SFX over art →
-  **skip the whole block**; do not clean parts of a sentence. When unsure, crop
-  + 2× zoom the area with PIL and look.
-- Ignore model false positives on art by simply not covering them with a box.
+Unreadable images are skipped with a `SKIP` line, not fatal.
 
-Emit one box per qualifying block. A box only needs to contain the block's
-tinted strokes — but **before finalizing it, scan the overlay INSIDE the box for
-tinted art** (model false positives: plant strokes, bubble-spike doodles, hair,
-screentone marks). Any tinted art inside the box WILL be erased by the fill, so
-shrink the box until it contains text strokes only (crop + 2× zoom the overlay
-when text and tinted art sit close). "Overlapping art is safe" holds only for
-art the model did NOT tint. Use `<stem>_detect.json` bboxes to get coordinates
-right.
+### 2. Assemble PSDs with GIMP
 
-### 3. Run the GIMP job
-
-Job JSON (batch several pages per invocation — GIMP startup is ~15 s). Only
-`fill_white` / `fill_black` mask_regions are used; pages with nothing to clean
-still get an entry with empty `mask_regions`:
+Job JSON (batch several pages per invocation — GIMP startup is ~15 s):
 
 ```json
 {
   "output_dir": "/abs/out",
   "pages": [
-    {"source": "/abs/010.jpg",
-     "text_mask": "/abs/out/detect/010_mask.png",
-     "mask_regions": [
-       {"box": [1090, 0, 210, 250], "action": "fill_white"},
-       {"box": [80, 50, 200, 310], "action": "fill_black"}
-     ]},
-    {"source": "/abs/011.jpg", "text_mask": "/abs/out/detect/011_mask.png",
-     "mask_regions": []}
+    {"source": "/abs/010.jpg", "cleaned": "/abs/out/detect/010_cleaned.png"},
+    {"source": "/abs/011.jpg", "cleaned": "/abs/out/detect/011_cleaned.png"}
   ]
 }
 ```
@@ -115,25 +122,51 @@ timeout 500 flatpak run --env=CLEAN_JOB=/abs/job.json org.gimp.GIMP -idf \
 Check `<job.json>.log` (GIMP stderr is noise): `OK <src> -> <psd>` per page,
 `DONE` at the end, `FAIL` + traceback per page on errors.
 
-(`gimp_clean.py` also still supports `heal`/`heal_dark`/`heal_light` Resynthesizer
-actions and old-style `regions` — use them only if the user explicitly asks to
-attempt removal of text over art, and warn that results are imperfect.)
+(`gimp_clean.py` also keeps a legacy mode — pages without a `"cleaned"` key are
+cleaned inside GIMP from `mask_regions`/`regions` lists, including the
+Resynthesizer `heal*` actions. Use only if the user explicitly asks for manual
+region work.)
 
-### 4. Verify and iterate (mandatory, at zoom level)
+### 3. Add Photoshop paragraph text boxes
 
-A full-page preview look is NOT enough — small collateral damage (an erased
-plant stroke, a clipped bubble spike) is invisible at page scale and has slipped
-through before. For **each cleaned box**, crop the same area (box + ~40 px
-margin) from BOTH the original and the preview, view the two crops side by side,
-and confirm: (a) the text is fully gone, (b) every art stroke present in the
-original crop is still present in the cleaned crop (spikes, plants, outlines),
-(c) nothing changed outside the box. Then also read the full preview once for
-overall sanity. Fix boxes and rerun failed pages — **each rerun reloads the
-pristine source, so a page's job must always carry its FULL region list**; any
-damage from a bad pass is undone by the next. When a page passes, add it to
-`progress.json`.
+```bash
+node <skill>/scripts/add_text_layers.mjs <output_dir> <stem1> <stem2> ...
+```
+
+For each `<stem>` this reads `<output_dir>/<stem>.psd` (from step 2) and
+`<output_dir>/detect/<stem>_detect.json` (from step 1), and appends one
+native Photoshop Type layer per entry in `text_blocks` — `shapeType: "box"`
+(a fixed word-wrap paragraph box, matching Photoshop's Paragraph Type tool,
+not the auto-sizing Point Type), positioned/sized to that block, pre-filled
+with Lorem ipsum placeholder text, centered black 10–32px CCWildWords-Regular
+(a manga/comic lettering font) by default. Rewrites the PSD in place. A page
+with zero detected blocks is skipped (logged, not fatal) — nothing to add.
+
+The font is referenced by PostScript name only, no font data is embedded —
+Photoshop resolves it from fonts installed on the machine that opens the
+file, substituting a fallback (with a missing-font warning, editability
+unaffected) if it isn't installed there. Opening a page in Photoshop will
+also show a one-time "update text layer" prompt per box the first time each
+is touched; this is normal for programmatically written text layers (the
+raster preview isn't pre-rendered) and does not affect editability.
+
+If `<output_dir>` lives inside an actively-syncing cloud folder (Nextcloud,
+Dropbox, etc.), a sync client can race a fresh write to that path and revert
+it to an older version within seconds. Verify the file (byte size, or grep
+for `TySh`) a moment after this step before trusting it, and prefer writing
+first to a local, unsynced path if that happens.
+
+### 4. Spot-check previews
+
+Read each preview at page scale and confirm nothing is grossly wrong (missing
+page, huge miscolored patch, unprocessed text the model plainly caught in the
+overlay). Do NOT chase small imperfections — faint inpaint ghosts and the odd
+missed glyph are expected and are the user's to fix manually against the
+Original layer. When a page looks sane, add it to `progress.json`.
 
 ### 5. Report
 
-Pages processed, output location, PSD layer structure, and per page which text
-was intentionally left (over-art SFX, signatures, blocks crossed by linework).
+Pages processed, output location, PSD layer structure, and anything notable
+per page: text the model left (yellow in the overlay usually means protected
+art, but check for real text the gate skipped) and art areas that were
+inpainted (green) and may want manual restoration.

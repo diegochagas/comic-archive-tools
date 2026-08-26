@@ -1,0 +1,9 @@
+{
+  "name": "manga-letterer",
+  "private": true,
+  "description": "Node deps for scripts/add_text_layers.mjs (writes native Photoshop paragraph text layers into the assembled PSDs).",
+  "type": "module",
+  "dependencies": {
+    "ag-psd": "^31.0.2"
+  }
+}

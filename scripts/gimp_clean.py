@@ -11,14 +11,22 @@
 #   "output_dir": "/abs/path",            # PSDs written here, previews in <output_dir>/preview
 #   "pages": [
 #     { "source": "/abs/path/010.jpg",
-#       "regions": [
-#         {"box": [x, y, w, h], "action": "fill_white"},
-#         {"box": [x, y, w, h], "action": "heal_dark", "radius": 60}
-#       ] }
+#       "cleaned": "/abs/out/detect/010_cleaned.png" }
 #   ]
 # }
 #
+# Standard mode ("cleaned" key): detect_text.py already produced the fully
+# cleaned page image; this script just stacks it on top of the untouched source
+# (layers "Cleaned" over "Original") and exports the PSD + a JPG preview.
+#
+# Legacy mode (no "cleaned" key): the source is duplicated and text is removed
+# in GIMP via "mask_regions"/"regions" entries with the actions below:
+#
 # Actions (box is always [x, y, width, height] in source-image pixels):
+#   fill        text on a plain background of ANY color: mask detected text strokes
+#               in box, sample the real background color from every non-text pixel
+#               in the box (excluding a small halo around each stroke), fill with
+#               that color. Pass "color" to force a specific fill color instead.
 #   fill_white  dark text on plain white bg: mask dark pixels in box, grow, fill white
 #   fill_black  light text on plain black bg: mask light pixels in box, grow, fill black
 #   fill_rect   blunt fill of the whole box with "color" (default "#ffffff")
@@ -27,7 +35,8 @@
 #   heal_light  mask light pixels in box, grow, heal only those
 # Optional per-region keys: "radius" (heal sampling radius px, default 50),
 #   "grow" (mask growth px, default 3), "threshold" (color-mask 0..1, default 0.35),
-#   "color" (fill_rect color).
+#   "color" (fill_rect / fill color), "halo" (fill bg-sampling exclusion margin
+#   around each stroke px, default 4).
 
 import json
 import os
@@ -36,7 +45,10 @@ import traceback
 import gi
 gi.require_version('Gimp', '3.0')
 gi.require_version('Gegl', '0.4')
-from gi.repository import Gimp, Gegl, Gio
+gi.require_version('Babl', '0.1')
+from gi.repository import Gimp, Gegl, Gio, Babl
+
+SRGB_SPACE = Babl.space("sRGB")
 
 JOB_PATH = os.environ["CLEAN_JOB"]
 LOG_PATH = JOB_PATH + ".log"
@@ -78,11 +90,65 @@ def mask_region_select(image, mask_layer, box, grow):
     return not Gimp.Selection.is_empty(image)
 
 
+def sample_bg_color(image, drawable, mask_layer, box, halo):
+    """Median color (0..1 RGB) of background pixels inside box: every pixel that
+    is not part of any detected text stroke anywhere in the box (not just this
+    region's own strokes), with a small halo margin stripped around each stroke
+    to avoid JPEG/anti-aliasing edge bias. Sampling the whole box interior (not
+    just a thin ring at its outer edge) matters for dense multi-line text, where
+    a boundary-only ring can land on non-representative pixels.
+    Returns None if no background pixels are found."""
+    x, y, w, h = box
+    pad = halo + 1
+    image.select_rectangle(Gimp.ChannelOps.REPLACE, x - pad, y - pad, w + 2 * pad, h + 2 * pad)
+    Gimp.context_set_sample_threshold(0.5)
+    image.select_color(Gimp.ChannelOps.INTERSECT, mask_layer, color("#ffffff"))
+    if halo > 0:
+        Gimp.Selection.grow(image, halo)
+    image.select_rectangle(Gimp.ChannelOps.INTERSECT, x, y, w, h)
+    stroke_halo = Gimp.Selection.save(image)
+    try:
+        image.select_rectangle(Gimp.ChannelOps.REPLACE, x, y, w, h)
+        image.select_item(Gimp.ChannelOps.SUBTRACT, stroke_halo)
+    finally:
+        image.remove_channel(stroke_halo)
+    if Gimp.Selection.is_empty(image):
+        return None
+    r = drawable.histogram(Gimp.HistogramChannel.RED, 0.0, 1.0).median / 255.0
+    g = drawable.histogram(Gimp.HistogramChannel.GREEN, 0.0, 1.0).median / 255.0
+    b = drawable.histogram(Gimp.HistogramChannel.BLUE, 0.0, 1.0).median / 255.0
+    return (r, g, b)
+
+
+def fill_auto_color(image, drawable, mask_layer, box, grow, halo, forced_color):
+    rgb = None if forced_color else sample_bg_color(image, drawable, mask_layer, box, halo)
+    if not mask_region_select(image, mask_layer, box, grow):
+        return
+    if forced_color:
+        Gimp.context_set_foreground(color(forced_color))
+    elif rgb is not None:
+        c = Gegl.Color.new("black")
+        # histogram()/edit_fill() work in gamma-encoded sRGB; set_rgba() alone treats
+        # its floats as LINEAR light, which would silently lighten the fill color.
+        c.set_rgba_with_space(rgb[0], rgb[1], rgb[2], 1.0, SRGB_SPACE)
+        Gimp.context_set_foreground(c)
+    else:
+        drawable.edit_fill(Gimp.FillType.WHITE)   # fallback: no background pixels found
+        return
+    drawable.edit_fill(Gimp.FillType.FOREGROUND)
+
+
 def apply_mask_region(image, drawable, mask_layer, region):
     box = [int(v) for v in region["box"]]
     action = region["action"]
     grow = int(region.get("grow", 2))
     radius = int(region.get("radius", 50))
+    halo = int(region.get("halo", 4))
+
+    if action == "fill":
+        fill_auto_color(image, drawable, mask_layer, box, grow, halo, region.get("color"))
+        return
+
     if not mask_region_select(image, mask_layer, box, grow):
         return
     if action == "fill_white":
@@ -147,26 +213,37 @@ def process_page(page, output_dir, preview_dir):
     stem = os.path.splitext(os.path.basename(src))[0]
     image = Gimp.file_load(Gimp.RunMode.NONINTERACTIVE, Gio.File.new_for_path(src))
     try:
-        cleaned = image.get_layers()[0]
-        original = cleaned.copy()
-        image.insert_layer(original, None, 1)
-        original.set_name("Original")
-        cleaned.set_name("Cleaned")
-
-        mask_regions = page.get("mask_regions", [])
-        if mask_regions:
-            mask_layer = Gimp.file_load_layer(
+        if page.get("cleaned"):
+            # standard mode: cleaned page was rendered by detect_text.py
+            original = image.get_layers()[0]
+            original.set_name("Original")
+            cleaned = Gimp.file_load_layer(
                 Gimp.RunMode.NONINTERACTIVE, image,
-                Gio.File.new_for_path(page["text_mask"]))
-            image.insert_layer(mask_layer, None, 0)
-            mask_layer.set_visible(False)
-            for region in mask_regions:
-                apply_mask_region(image, cleaned, mask_layer, region)
-            image.remove_layer(mask_layer)
+                Gio.File.new_for_path(page["cleaned"]))
+            image.insert_layer(cleaned, None, 0)
+            cleaned.set_name("Cleaned")
+        else:
+            # legacy mode: clean inside GIMP from region lists
+            cleaned = image.get_layers()[0]
+            original = cleaned.copy()
+            image.insert_layer(original, None, 1)
+            original.set_name("Original")
+            cleaned.set_name("Cleaned")
 
-        for region in page.get("regions", []):
-            apply_region(image, cleaned, region)
-        Gimp.Selection.none(image)
+            mask_regions = page.get("mask_regions", [])
+            if mask_regions:
+                mask_layer = Gimp.file_load_layer(
+                    Gimp.RunMode.NONINTERACTIVE, image,
+                    Gio.File.new_for_path(page["text_mask"]))
+                image.insert_layer(mask_layer, None, 0)
+                mask_layer.set_visible(False)
+                for region in mask_regions:
+                    apply_mask_region(image, cleaned, mask_layer, region)
+                image.remove_layer(mask_layer)
+
+            for region in page.get("regions", []):
+                apply_region(image, cleaned, region)
+            Gimp.Selection.none(image)
 
         psd_path = os.path.join(output_dir, stem + ".psd")
         Gimp.file_save(Gimp.RunMode.NONINTERACTIVE, image,

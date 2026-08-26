@@ -25,4 +25,12 @@ if ! flatpak info org.gimp.GIMP >/dev/null 2>&1; then
     echo "WARNING: flatpak GIMP (org.gimp.GIMP) not found - install it to use this skill."
     echo "  flatpak install flathub org.gimp.GIMP"
 fi
+
+if command -v npm >/dev/null 2>&1; then
+    npm install --silent
+    echo "node_modules ready: ag-psd $(node -p "require('./node_modules/ag-psd/package.json').version")"
+else
+    echo "WARNING: npm not found - install Node.js to enable add_text_layers.mjs (Photoshop text-layer step)."
+fi
+
 echo "Setup complete."
