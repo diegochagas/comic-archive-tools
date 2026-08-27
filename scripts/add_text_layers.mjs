@@ -10,12 +10,17 @@
 // cannot write native Photoshop text layers (its PSD exporter rasterizes
 // them), so this step uses ag-psd to write the "TySh" layer info directly.
 //
-// Usage: node add_text_layers.mjs <output_dir> <stem> [<stem>...]
-//
+// Usage (batch mode, used by the fixed pipeline):
+//   node add_text_layers.mjs <output_dir> <stem> [<stem>...]
 // For each <stem> expects <output_dir>/<stem>.psd (from gimp_clean.py) and
 // <output_dir>/detect/<stem>_detect.json (from detect_text.py, for
 // text_blocks). Rewrites the PSD in place. Stems with no PSD, no detect
 // json, or zero text blocks are skipped (logged, not fatal).
+//
+// Usage (single-file mode, used by add_text_boxes.py against any standalone
+// PSD, not just ones from gimp_clean.py's output convention):
+//   node add_text_layers.mjs --psd <path> --detect-json <path> [--output <path>]
+// --output defaults to overwriting --psd in place.
 //
 // The font is referenced by PostScript name only (no font data is
 // embedded) -- Photoshop resolves it from fonts installed on the machine
@@ -37,23 +42,20 @@ function fontSizeFor(_w, h) {
   return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(h / LINES_PER_BOX)));
 }
 
-function addTextLayers(outDir, stem) {
-  const psdPath = path.join(outDir, `${stem}.psd`);
-  const detectPath = path.join(outDir, 'detect', `${stem}_detect.json`);
-
+function addTextLayers(psdPath, detectPath, outPath, label) {
   if (!fs.existsSync(psdPath)) {
-    console.log(`SKIP ${stem}: no PSD at ${psdPath}`);
+    console.log(`SKIP ${label}: no PSD at ${psdPath}`);
     return;
   }
   if (!fs.existsSync(detectPath)) {
-    console.log(`SKIP ${stem}: no detect json at ${detectPath}`);
+    console.log(`SKIP ${label}: no detect json at ${detectPath}`);
     return;
   }
 
   const detect = JSON.parse(fs.readFileSync(detectPath, 'utf8'));
   const blocks = detect.text_blocks || [];
   if (!blocks.length) {
-    console.log(`${stem}: 0 text blocks, nothing to add`);
+    console.log(`${label}: 0 text blocks, nothing to add`);
     return;
   }
 
@@ -87,19 +89,47 @@ function addTextLayers(outDir, stem) {
     });
   }
 
-  fs.writeFileSync(psdPath, writePsdBuffer(psd));
-  console.log(`${stem}: added ${blocks.length} text layer(s)`);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  fs.writeFileSync(outPath, writePsdBuffer(psd));
+  console.log(`${label}: added ${blocks.length} text layer(s)`);
 }
 
 function main() {
-  const [outDir, ...stems] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const psdIdx = argv.indexOf('--psd');
+
+  if (psdIdx !== -1) {
+    // single-file mode
+    const detectIdx = argv.indexOf('--detect-json');
+    const outIdx = argv.indexOf('--output');
+    const psdPath = argv[psdIdx + 1];
+    const detectPath = detectIdx !== -1 ? argv[detectIdx + 1] : undefined;
+    if (!psdPath || !detectPath) {
+      console.error('Usage: node add_text_layers.mjs --psd <path> --detect-json <path> [--output <path>]');
+      process.exit(1);
+    }
+    const outPath = outIdx !== -1 ? argv[outIdx + 1] : psdPath;
+    try {
+      addTextLayers(psdPath, detectPath, outPath, path.basename(psdPath));
+    } catch (e) {
+      console.log(`SKIP ${path.basename(psdPath)}: ${e.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // batch mode: <output_dir> <stem> [<stem>...]
+  const [outDir, ...stems] = argv;
   if (!outDir || !stems.length) {
     console.error('Usage: node add_text_layers.mjs <output_dir> <stem> [<stem>...]');
+    console.error('   or: node add_text_layers.mjs --psd <path> --detect-json <path> [--output <path>]');
     process.exit(1);
   }
   for (const stem of stems) {
+    const psdPath = path.join(outDir, `${stem}.psd`);
+    const detectPath = path.join(outDir, 'detect', `${stem}_detect.json`);
     try {
-      addTextLayers(outDir, stem);
+      addTextLayers(psdPath, detectPath, psdPath, stem);
     } catch (e) {
       console.log(`SKIP ${stem}: ${e.message}`);
     }

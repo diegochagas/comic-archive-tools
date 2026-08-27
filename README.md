@@ -117,13 +117,417 @@ and revert it to an older version within seconds — verify the result a
 moment after writing, or write to a local, unsynced path first if that
 happens.
 
+## Modular pipeline scripts
+
+Alongside the fixed pipeline above, three scripts let you build and extend PSDs
+incrementally, each usable on its own and each accepting a folder or a single
+file:
+
+- **`scripts/image_to_psd.py`** — folder or single image -> a PSD with two
+  identical raster layers, `Original` (bottom) and `Copy` (top). No detection,
+  no cleaning: just the starting point for the two scripts below.
+- **`scripts/add_cleaned_layer.py`** — folder or single PSD -> a *copy* of the
+  PSD with a new `Cleaned` layer appended on top, with all detected text
+  erased exactly like `detect_text.py` does in the fixed pipeline. Detects
+  text on the PSD's `Original` layer (or reuses a previous `detect_text.py`
+  run's JSON via `--detect-dir`, instead of re-running the model). Never
+  modifies the input file.
+- **`scripts/add_text_boxes.py`** — folder or single PSD -> appends one native
+  Photoshop paragraph text layer per detected text region, in place. Detects
+  text the same way (fresh, or reused via `--detect-dir`).
+
+Recommended stacking order when using all three: `image_to_psd.py` ->
+`add_cleaned_layer.py` -> `add_text_boxes.py` (Original -> Cleaned -> text
+boxes, bottom to top) — this reproduces the same end result as the fixed
+pipeline, one composable step at a time. The last two can safely run in either
+order on the same file: `add_cleaned_layer.py` never re-opens the PSD through
+GIMP (it appends the raster layer directly with `ag-psd`), so it can't
+rasterize/corrupt Photoshop text layers `add_text_boxes.py` already wrote.
+
+```
+python scripts/image_to_psd.py <folder-or-image> [--output <dir>]
+python scripts/add_cleaned_layer.py <folder-or-psd> [--output <dir>] [--layer-name Original] [--detect-dir <dir>]
+python scripts/add_text_boxes.py <folder-or-psd> [--layer-name Original] [--detect-dir <dir>]
+```
+
+## Standalone tools
+
+`tools/` holds general-purpose image/CBR/PDF utilities, independent of the
+manga-letterer skill above. Each is a self-contained CLI script.
+
+### tools/images_to_cbr.py
+
+Packages a folder of images into a `.cbr` file, which is a ZIP archive renamed for comic book readers.
+
+By default, images are added exactly as they are. Optional flags can convert images to JPEG and resize tall images before they are written into the archive.
+
+#### How it works
+
+- If the target folder contains subfolders, each subfolder is packaged into its own `.cbr` file saved in the target folder.
+- If the target folder contains images directly and no subfolders, the folder is packaged into a single `.cbr` saved in the parent folder.
+- Existing `.cbr` files are skipped unless `--overwrite` is passed.
+
+Supported image formats: `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.tif`
+
+#### Requirements
+
+- Python 3.10+
+- Standard library only for as-is packing
+- [Pillow](https://pillow.readthedocs.io/) when using `--convert-jpeg` or `--max-height`
+
+```
+pip install pillow
+```
+
+#### Usage
+
+```
+python tools/images_to_cbr.py <folder> [--convert-jpeg] [--max-height <pixels>] [--quality <number>] [--overwrite]
+```
+
+| Flag                  | Description                                             | Default |
+| --------------------- | ------------------------------------------------------- | ------- |
+| `--convert-jpeg`      | Convert all images to JPEG before packaging             | Off     |
+| `--max-height <px>`   | Resize images taller than this height; outputs JPEG     | Off     |
+| `--quality <number>`  | JPEG quality for converted or resized images, 1-100     | `90`    |
+| `--overwrite`         | Replace existing `.cbr` files                           | Off     |
+
+#### Examples
+
+Pack each subfolder of a directory into its own CBR:
+
+```
+python tools/images_to_cbr.py "/path/to/comics"
+```
+
+Pack all images in one folder into one CBR:
+
+```
+python tools/images_to_cbr.py "/path/to/chapter1"
+```
+
+Convert to JPEG and resize images taller than 2500 pixels:
+
+```
+python tools/images_to_cbr.py "/path/to/chapter1" --convert-jpeg --max-height 2500
+```
+
+---
+
+### tools/cbr_to_images.py
+
+Extracts `.cbr`, `.cbz`, and `.zip` comic book archives into image folders.
+
+The script detects whether each archive is ZIP-based or RAR-based, then extracts it into a folder with the same base name without renaming the original archive.
+
+#### How it works
+
+- Scans only the target folder itself for `.cbr`, `.cbz`, and `.zip` files.
+- Extracts each archive into a sibling folder with the same base name.
+- If an output folder already exists, a numeric suffix is added, such as `Comic (1)`.
+- If extraction fails, the partially created output folder is removed.
+- ZIP-based archives are extracted with Python's standard library.
+- RAR-based `.cbr` files are extracted with WinRAR, UnRAR, or 7-Zip when one is installed or available on `PATH`.
+- `.zip` files are included so a previously renamed archive can still be extracted.
+
+Example:
+
+```
+/path/to/comics/Chapter 01.cbr -> /path/to/comics/Chapter 01/...
+```
+
+#### Requirements
+
+- Python 3.10+
+- Standard library only for ZIP-based `.cbz` files
+- WinRAR, UnRAR, or 7-Zip for RAR-based `.cbr` files
+
+#### Usage
+
+```
+python tools/cbr_to_images.py <folder> [--dry-run] [--first-only]
+```
+
+| Flag           | Description                                                                  | Default |
+| -------------- | ----------------------------------------------------------------------------- | ------- |
+| `--dry-run`    | Show planned extractions without changing files                              | Off     |
+| `--first-only` | Extract only the first image from each archive and save it to the same folder | Off     |
+
+#### Examples
+
+Extract all CBR/CBZ archives in a folder:
+
+```
+python tools/cbr_to_images.py "/path/to/comics"
+```
+
+Preview what would happen first:
+
+```
+python tools/cbr_to_images.py "/path/to/comics" --dry-run
+```
+
+Extract only the first image (cover) from every archive in the folder:
+
+```
+python tools/cbr_to_images.py "/path/to/comics" --first-only
+```
+
+Each archive produces one image file next to itself named `<archive stem>.<ext>` (e.g. `Chapter 01.cbr` → `Chapter 01.jpg`). Combine with `--dry-run` to preview which files would be created.
+
+---
+
+### tools/pdf_to_images.py
+
+Extracts PDF pages as JPG images.
+
+#### How it works
+
+For each PDF found in the target folder, the script renders every page as a JPG image at the requested DPI.
+After rendering, it checks that the extracted JPG count matches the PDF page count.
+
+By default, each PDF gets its own output folder:
+
+```
+/path/to/pdfs/Comic.pdf -> /path/to/pdfs/Comic/0001.jpg
+```
+
+With `--single-folder`, every PDF is extracted into one shared folder, and output filenames include the PDF name:
+
+```
+/path/to/pdfs/pdfs/Comic_0001.jpg
+```
+
+#### Requirements
+
+- Python 3.7+
+- [PyMuPDF](https://pymupdf.readthedocs.io/)
+
+```
+pip install pymupdf
+```
+
+#### Usage
+
+```
+python tools/pdf_to_images.py <folder> [--dpi <number>] [--overwrite] [--single-folder] [--output <folder>]
+```
+
+If you omit the folder path, the script will prompt you to enter it.
+
+| Flag                | Description                                                | Default                       |
+| ------------------- | ------------------------------------------------------------ | ------------------------------ |
+| `--dpi <number>`    | Rendering resolution in DPI                                | `150`                         |
+| `--overwrite`       | Replace existing output folders                            | Off                           |
+| `--single-folder`   | Extract all PDFs into one shared image folder              | Off                           |
+| `--output <folder>` | Shared output folder; only valid with `--single-folder`    | `<folder>/<folder_name>` |
+
+#### Examples
+
+Extract each PDF into its own folder:
+
+```
+python tools/pdf_to_images.py "/path/to/pdfs"
+```
+
+Extract at higher resolution:
+
+```
+python tools/pdf_to_images.py "/path/to/pdfs" --dpi 300
+```
+
+Extract all PDFs into one folder:
+
+```
+python tools/pdf_to_images.py "/path/to/pdfs" --single-folder
+```
+
+Extract all PDFs into a specific folder:
+
+```
+python tools/pdf_to_images.py "/path/to/pdfs" --single-folder --output "/path/to/all-images"
+```
+
+To turn extracted images into CBR files, run `tools/images_to_cbr.py` on the folder that contains the image folders.
+
+---
+
+### tools/psd_to_jpg.py
+
+Converts Photoshop `.psd` and `.psb` files into high-quality `.jpg` files without changing their pixel dimensions.
+
+#### How it works
+
+- Scans the source folder recursively for `.psd` and `.psb` files.
+- Saves JPG files into a separate output folder while preserving the source folder structure.
+- Uses the flattened PSD/PSB composite image; it does not export individual layers.
+- With `--show-all-layers`, ignores the saved composite and instead recomposites the file with every layer and group forced visible, using `psd-tools`.
+- Transparent images are flattened against a matte background color before saving as JPG.
+- Existing JPG files are skipped when they are newer than the source file unless `--overwrite` is passed.
+
+If no output folder is provided, JPG files are written to a sibling folder named `<source folder> JPG`.
+
+#### Requirements
+
+- Python 3.10+
+- [Pillow](https://pillow.readthedocs.io/)
+- [psd-tools](https://psd-tools.readthedocs.io/) with the `composite` extras, only needed for `--show-all-layers`
+
+```
+pip install pillow
+pip install "psd-tools[composite]"
+```
+
+#### Usage
+
+```
+python tools/psd_to_jpg.py <source> [--output <folder>] [--background <color>] [--overwrite] [--show-all-layers] [--limit <number>]
+```
+
+| Flag                   | Description                                                  | Default                    |
+| ---------------------- | -------------------------------------------------------------- | ---------------------------- |
+| `source`               | Folder to scan recursively for PSD/PSB files                 | Required                   |
+| `-o`, `--output <dir>` | Output folder for generated JPG files                        | `<source folder> JPG`      |
+| `--background <color>` | Matte color used when flattening transparent files           | `white`                    |
+| `--overwrite`          | Replace JPGs even when they are newer than the source PSD/PSB | Off                        |
+| `--show-all-layers`    | Force every layer and group visible before flattening (requires `psd-tools`) | Off         |
+| `--limit <number>`     | Convert only the first N files, useful for testing           | `0` / no limit             |
+
+#### Examples
+
+Convert a specific folder:
+
+```
+python tools/psd_to_jpg.py "/path/to/psd-files"
+```
+
+Write JPG files to a specific output folder:
+
+```
+python tools/psd_to_jpg.py "/path/to/psd-files" --output "/path/to/jpg-output"
+```
+
+Flatten transparent images against a black background:
+
+```
+python tools/psd_to_jpg.py "/path/to/psd-files" --background black
+```
+
+Render with hidden layers and groups forced visible:
+
+```
+python tools/psd_to_jpg.py "/path/to/psd-files" --show-all-layers
+```
+
+Test with only the first five PSD/PSB files:
+
+```
+python tools/psd_to_jpg.py "/path/to/psd-files" --limit 5
+```
+
+---
+
+### tools/rotate_images.py
+
+Rotates all images in a folder by a specified number of degrees, overwriting the originals in place.
+
+#### Requirements
+
+- Python 3.7+
+- [Pillow](https://pillow.readthedocs.io/)
+
+```
+pip install pillow
+```
+
+#### Usage
+
+```
+python tools/rotate_images.py <folder> [degrees]
+```
+
+`degrees` defaults to `90` if not specified.
+
+#### Examples
+
+Rotate all images 90 degrees clockwise:
+
+```
+python tools/rotate_images.py "/path/to/images"
+```
+
+Rotate all images 180 degrees:
+
+```
+python tools/rotate_images.py "/path/to/images" 180
+```
+
+#### Notes
+
+- Images are overwritten in place. Make a backup first if needed.
+- Supported formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.gif`, `.tiff`, `.webp`
+
+---
+
+### tools/stretch_pngs.py
+
+Stretches every PNG image in a folder to an exact width and height. The resized images are saved in an `output` subfolder, leaving the originals unchanged.
+
+#### Requirements
+
+- Python 3.7+
+- [Pillow](https://pillow.readthedocs.io/)
+
+```
+pip install pillow
+```
+
+#### Usage
+
+```
+python tools/stretch_pngs.py <folder> <width> <height>
+```
+
+- `folder`: folder containing the PNG images
+- `width`: target width in pixels
+- `height`: target height in pixels
+
+#### Examples
+
+Stretch all PNG files to 1920 x 1080 pixels:
+
+```
+python tools/stretch_pngs.py "/path/to/images" 1920 1080
+```
+
+Stretch all PNG files to 800 x 1200 pixels:
+
+```
+python tools/stretch_pngs.py "/path/to/images" 800 1200
+```
+
+#### Notes
+
+- Only PNG files directly inside the specified folder are processed; subfolders are not scanned.
+- The aspect ratio is not preserved. Each image is stretched to the exact dimensions provided.
+- Output is written to `<folder>/output` using the original filenames. Existing files with the same names are overwritten.
+- Images are resized with Pillow's high-quality LANCZOS resampling filter.
+
 ## Layout
 
 ```
-SKILL.md                     skill instructions (workflow, job format)
-scripts/detect_text.py       text detection + erase -> cleaned page, mask, overlay, JSON
-scripts/gimp_clean.py        GIMP 3 batch script -> raster layer assembly, PSD export
-scripts/add_text_layers.mjs  ag-psd script -> native Photoshop paragraph text layers
-setup.sh                     creates venv + node_modules, installs deps, downloads the ONNX model
-models/, venv/, node_modules/  created by setup.sh (not committed)
+SKILL.md                        skill instructions (workflow, job format)
+scripts/detect_text.py          text detection + erase -> cleaned page, mask, overlay, JSON
+scripts/gimp_clean.py           GIMP 3 batch script -> raster layer assembly, PSD export (fixed pipeline)
+scripts/gimp_base_psd.py        GIMP 3 batch script -> base 2-layer PSD, no cleaning (image_to_psd.py)
+scripts/gimp_export_layer.py    GIMP 3 batch script -> exports one named PSD layer to PNG
+scripts/detect_or_reuse.py      shared helper: reuse a previous detect_text.py run or generate one
+scripts/image_to_psd.py         CLI: folder/image -> base PSD (Original + Copy)
+scripts/add_cleaned_layer.py    CLI: folder/PSD -> copy with a new Cleaned layer appended
+scripts/add_cleaned_layer.mjs   ag-psd script -> appends a raster layer to an existing PSD
+scripts/add_text_boxes.py       CLI: folder/PSD -> native Photoshop paragraph text layers appended
+scripts/add_text_layers.mjs     ag-psd script -> native Photoshop paragraph text layers (also used by the fixed pipeline)
+setup.sh                        creates venv + node_modules, installs deps, downloads the ONNX model
+models/, venv/, node_modules/   created by setup.sh (not committed)
+tools/                          general-purpose image/CBR/PDF CLI scripts, independent of the skill
 ```

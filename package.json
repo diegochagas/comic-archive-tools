@@ -1,9 +1,10 @@
 {
-  "name": "manga-letterer",
+  "name": "comic-archive-tools",
   "private": true,
-  "description": "Node deps for scripts/add_text_layers.mjs (writes native Photoshop paragraph text layers into the assembled PSDs).",
+  "description": "Node deps for scripts/add_text_layers.mjs and scripts/add_cleaned_layer.mjs (append native Photoshop text/raster layers into PSDs via ag-psd).",
   "type": "module",
   "dependencies": {
-    "ag-psd": "^31.0.2"
+    "ag-psd": "^31.0.2",
+    "pngjs": "^7.0.0"
   }
 }

@@ -11,7 +11,8 @@ if [ ! -d venv ]; then
     python3 -m venv venv
     venv/bin/pip install --quiet --upgrade pip
 fi
-venv/bin/pip install --quiet onnxruntime opencv-python-headless numpy
+venv/bin/pip install --quiet onnxruntime opencv-python-headless numpy \
+    pillow pymupdf "psd-tools[composite]"
 echo "venv ready: $(venv/bin/python -c 'import onnxruntime; print("onnxruntime", onnxruntime.__version__)')"
 
 if [ ! -f "$MODEL_PATH" ]; then

@@ -53,13 +53,16 @@ Division of labor:
 ## Requirements (all already installed)
 
 - Flatpak GIMP 3 (`org.gimp.GIMP`).
-- This skill's venv: `<skill>/venv/bin/python` (onnxruntime, opencv, numpy).
+- This skill's venv: `<skill>/venv/bin/python` (onnxruntime, opencv, numpy,
+  plus pillow/pymupdf/psd-tools for the standalone tools in `tools/`).
 - Model: `<skill>/models/comictextdetector.pt.onnx` (re-download from
   manga-image-translator GitHub release `beta-0.3` if missing).
-- Node.js + `<skill>/node_modules/ag-psd` (installed by `setup.sh`; run it
-  again if `node_modules` is missing).
+- Node.js + `<skill>/node_modules/ag-psd` and `pngjs` (installed by
+  `setup.sh`; run it again if `node_modules` is missing).
 - Scripts: `<skill>/scripts/detect_text.py`, `<skill>/scripts/gimp_clean.py`,
-  `<skill>/scripts/add_text_layers.mjs`.
+  `<skill>/scripts/add_text_layers.mjs` (fixed pipeline); `image_to_psd.py`,
+  `add_cleaned_layer.py`, `add_text_boxes.py` and their GIMP/ag-psd helpers
+  (modular alternative, see below).
 
 ## Inputs
 
@@ -170,3 +173,32 @@ Pages processed, output location, PSD layer structure, and anything notable
 per page: text the model left (yellow in the overlay usually means protected
 art, but check for real text the gate skipped) and art areas that were
 inpainted (green) and may want manual restoration.
+
+## Modular alternative: incremental PSD building
+
+The fixed pipeline above always runs detect+clean+text-boxes together. Three
+scripts do the same steps as standalone, composable stages instead — useful
+when the user wants to build a base PSD now and decide on cleaning/text boxes
+later, only add text boxes without auto-cleaning, or re-run one stage without
+redoing the others:
+
+```bash
+python <skill>/scripts/image_to_psd.py <folder-or-image>          # Original + Copy, no cleaning
+python <skill>/scripts/add_cleaned_layer.py <folder-or-psd>        # -> copy with a new Cleaned layer
+python <skill>/scripts/add_text_boxes.py <folder-or-psd>           # -> text boxes appended in place
+```
+
+Each accepts a folder or a single file. `add_cleaned_layer.py` and
+`add_text_boxes.py` both detect text on the PSD's `Original` layer (override
+with `--layer-name`), and reuse a previous `detect_text.py` run instead of
+re-running the ONNX model if one is already at `<psd's folder>/detect/`
+(override with `--detect-dir`) — pointing both scripts at the same
+`--detect-dir` for a page means detection only ever runs once for it.
+
+Recommended stacking order: `image_to_psd.py` → `add_cleaned_layer.py` →
+`add_text_boxes.py` (Original → Cleaned → text boxes, bottom to top) — this
+reproduces the fixed pipeline's end result one step at a time. The last two
+can run in either order on the same file without risk: `add_cleaned_layer.py`
+appends its raster layer via `ag-psd` directly (see `scripts/add_cleaned_layer.mjs`),
+never round-tripping the PSD through GIMP, so it can't rasterize/corrupt
+Photoshop text layers `add_text_boxes.py` already wrote.
