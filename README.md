@@ -17,6 +17,8 @@ independent — use whichever one you need.
 | `tools/psd_to_jpg.py` | Converts Photoshop `.psd`/`.psb` files to JPG. |
 | `tools/rotate_images.py` | Rotates every image in a folder by a given angle. |
 | `tools/stretch_pngs.py` | Stretches every PNG in a folder to exact dimensions. |
+| `tools/transcribe_japanese_images.py` | Transcribes Japanese text from every image in a folder into a block-organized TXT file. |
+| `tools/translate_japanese_texts_ptbr.py` | Translates a block-organized Japanese transcription TXT into Brazilian Portuguese. |
 
 ---
 
@@ -148,6 +150,8 @@ pre-rendered) and has no effect on editing.
 - Python 3 with `venv`.
 - Node.js + npm (for the `ag-psd`-based text-layer steps).
 - ~100 MB disk for the detection model (downloaded by `setup.sh`).
+- Tesseract OCR binary on `PATH` (`sudo apt install tesseract-ocr`), only
+  needed for `tools/transcribe_japanese_images.py`.
 - The `CCWildWords-Regular` font installed wherever you'll actually letter
   the pages in Photoshop, if you want the placeholder text to render
   correctly instead of falling back.
@@ -160,10 +164,11 @@ git clone <this repo> ~/.claude/skills/manga-letterer
 ```
 
 `setup.sh` creates the Python venv (also covers the standalone `tools/`
-scripts' deps), downloads the ONNX detection model, and runs `npm install`
-for the `ag-psd`/`pngjs` dependencies. Then in Claude Code, ask to clean a
-folder of pages or invoke `/manga-letterer`. Output goes to a `psd/` folder
-next to the images by default (PSDs, previews, and detection artifacts).
+scripts' deps), downloads the ONNX detection model and the Japanese Tesseract
+language data (`tools/tessdata/`), and runs `npm install` for the
+`ag-psd`/`pngjs` dependencies. Then in Claude Code, ask to clean a folder of
+pages or invoke `/manga-letterer`. Output goes to a `psd/` folder next to the
+images by default (PSDs, previews, and detection artifacts).
 
 If the output folder lives inside an actively-syncing cloud drive
 (Nextcloud, Dropbox, ...), be aware the sync client can race a fresh write
@@ -542,6 +547,134 @@ python tools/stretch_pngs.py "/path/to/images" 800 1200
 
 ---
 
+## Japanese OCR & translation
+
+`tools/transcribe_japanese_images.py` and `tools/translate_japanese_texts_ptbr.py`
+form a Japanese OCR + Portuguese translation pipeline for manga/novel page
+scans: the first produces a block-organized transcription, and the second
+translates it, keeping the same block structure so each translated block
+still maps back to its source image.
+
+### tools/transcribe_japanese_images.py
+
+Transcribes Japanese text from every image in a folder into a UTF-8 `.txt` file.
+
+The output is organized in blocks. Each block starts with the original image filename, so it is easy to review or translate page by page.
+
+Example output block:
+
+```
+## 10-11.jpg
+
+Japanese OCR text for this image...
+
+---
+```
+
+#### How it works
+
+- Scans only the target folder itself for supported image files.
+- Sorts image filenames naturally, so `2-3.jpg` comes before `10-11.jpg`.
+- Uses Tesseract OCR with Japanese language data.
+- Defaults to `jpn_vert+jpn` and `--psm 5`, which works better for many vertical Japanese novel scans.
+- Downscales very large images before OCR so oversized scans do not stall processing.
+- Writes one text block per original image file.
+- Caches each image OCR result next to the output file, so reruns are faster.
+
+Supported image formats: `.jpg`, `.jpeg`, `.png`, `.tif`, `.tiff`, `.bmp`, `.webp`
+
+#### Requirements
+
+- Python 3.10+ with [Pillow](https://pillow.readthedocs.io/) (already in `venv/` if you ran `setup.sh`)
+- Tesseract OCR binary on `PATH` (`sudo apt install tesseract-ocr`)
+- Japanese Tesseract data: `jpn.traineddata` and `jpn_vert.traineddata` — `setup.sh` downloads both into `tools/tessdata/`, which the script uses automatically
+
+#### Usage
+
+```
+python tools/transcribe_japanese_images.py <folder> [--output <txt>] [--lang <langs>] [--psm <number>] [--max-side <pixels>] [--ocr-timeout <seconds>] [--no-cache]
+```
+
+| Flag                      | Description                                                        | Default                          |
+| ------------------------- | ------------------------------------------------------------------ | --------------------------------- |
+| `--output`, `-o <txt>`    | Output TXT file                                                    | `<folder>/japanese_transcription.txt` |
+| `--tesseract <path>`      | Full path to the tesseract binary                                  | Auto-detected on `PATH`          |
+| `--tessdata-dir <folder>` | Folder containing Tesseract language data                          | `tools/tessdata`                 |
+| `--lang <langs>`          | Tesseract OCR language setting                                     | `jpn_vert+jpn`                   |
+| `--psm <number>`          | Tesseract page segmentation mode                                   | `5`                               |
+| `--max-side <pixels>`     | Resize images larger than this on the longest side before OCR      | `4000`                            |
+| `--ocr-timeout <seconds>` | Maximum OCR time for one image                                     | `240`                             |
+| `--no-cache`              | Disable per-image OCR cache                                        | Off                                |
+
+#### Examples
+
+Transcribe all images in a folder:
+
+```
+python tools/transcribe_japanese_images.py "/path/to/images"
+```
+
+Write the transcription to a specific file:
+
+```
+python tools/transcribe_japanese_images.py "/path/to/images" --output "/path/to/japanese_text.txt"
+```
+
+Try horizontal Japanese OCR instead of vertical OCR:
+
+```
+python tools/transcribe_japanese_images.py "/path/to/images" --lang jpn --psm 6
+```
+
+### tools/translate_japanese_texts_ptbr.py
+
+Translates a block-organized Japanese transcription `.txt` file into Brazilian Portuguese.
+
+It expects the input file generated by `transcribe_japanese_images.py`, keeps the same block structure, and writes a new `.txt` file where each block is still identified by the original image filename.
+
+#### How it works
+
+- Reads blocks that start with `## image-name.jpg`.
+- Translates each image block separately.
+- Keeps the original image filename as the block heading.
+- Writes UTF-8 text with the same `---` separator between blocks.
+- Caches each translated block next to the output file, so reruns are faster.
+
+#### Requirements
+
+- Python 3.10+
+- [deep-translator](https://pypi.org/project/deep-translator/) (already in `venv/` if you ran `setup.sh`, otherwise `pip install deep-translator`)
+- Internet access for Google Translate requests
+
+#### Usage
+
+```
+python tools/translate_japanese_texts_ptbr.py <japanese_txt> [--output <txt>] [--source <lang>] [--target <lang>] [--no-cache]
+```
+
+| Flag                   | Description                         | Default                  |
+| ---------------------- | ------------------------------------| ------------------------- |
+| `--output`, `-o <txt>` | Output translated TXT file          | `<input_stem>_pt_br.txt` |
+| `--source <lang>`      | Source language for translation     | `ja`                      |
+| `--target <lang>`      | Target language for translation     | `pt`                      |
+| `--no-cache`           | Disable per-block translation cache | Off                       |
+
+#### Examples
+
+Translate the default transcription file:
+
+```
+python tools/translate_japanese_texts_ptbr.py "/path/to/images/japanese_transcription.txt"
+```
+
+Write the translation to a specific file:
+
+```
+python tools/translate_japanese_texts_ptbr.py "/path/to/japanese_text.txt" --output "/path/to/portuguese_pt_br.txt"
+```
+
+---
+
 ## Layout
 
 ```
@@ -556,7 +689,8 @@ scripts/add_cleaned_layer.py    CLI: folder/PSD -> copy with a new Cleaned layer
 scripts/add_cleaned_layer.mjs   ag-psd script -> appends a raster layer to an existing PSD
 scripts/add_text_boxes.py       CLI: folder/PSD -> native Photoshop paragraph text layers appended
 scripts/add_text_layers.mjs     ag-psd script -> native Photoshop paragraph text layers (also used by the fixed pipeline)
-setup.sh                        creates venv + node_modules, installs deps, downloads the ONNX model
+setup.sh                        creates venv + node_modules, installs deps, downloads the ONNX model + tessdata
 models/, venv/, node_modules/   created by setup.sh (not committed)
-tools/                          comic archive packaging, PDF/PSD conversion, and image utility scripts
+tools/                          comic archive packaging, PDF/PSD conversion, image utilities, and Japanese OCR/translation scripts
+tools/tessdata/                 Japanese Tesseract language data, downloaded by setup.sh (not committed)
 ```

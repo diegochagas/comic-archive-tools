@@ -1,5 +1,6 @@
 venv/
 models/
+tools/tessdata/
 __pycache__/
 *.pyc
 node_modules/
