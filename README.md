@@ -1,14 +1,35 @@
-# manga-letterer
+# comic-archive-tools
 
-A [Claude Code](https://claude.com/claude-code) skill that turns a folder of
-manga/doujinshi page scans into layered PSD files ready to hand to a
-letterer: the original text erased cleanly, and an editable Photoshop
-paragraph text box already sitting in place of each speech bubble/caption,
-pre-filled with placeholder text in a comic lettering font. No more
-hand-drawing a Type tool box over every bubble before you can start
+A toolkit for working with comic/manga page archives: packaging and
+extracting CBR/CBZ archives, converting between PDF/PSD/image formats, small
+image utilities, and a Claude Code skill that automates Photoshop lettering
+prep (text detection, cleaning, paragraph text boxes). Each piece below is
+independent — use whichever one you need.
+
+## Overview
+
+| Script / skill | What it does |
+| --- | --- |
+| **Manga lettering pipeline** (`SKILL.md` + `scripts/`) | Claude Code skill — turns manga/doujinshi page scans into layered, letter-ready PSDs: text detected and erased, a native Photoshop paragraph text box added per speech bubble. |
+| `tools/images_to_cbr.py` | Packages a folder of images into a `.cbr` archive. |
+| `tools/cbr_to_images.py` | Extracts `.cbr`/`.cbz`/`.zip` comic archives into image folders. |
+| `tools/pdf_to_images.py` | Extracts PDF pages as JPG images. |
+| `tools/psd_to_jpg.py` | Converts Photoshop `.psd`/`.psb` files to JPG. |
+| `tools/rotate_images.py` | Rotates every image in a folder by a given angle. |
+| `tools/stretch_pngs.py` | Stretches every PNG in a folder to exact dimensions. |
+
+---
+
+## Manga lettering pipeline (Claude Code skill)
+
+Turns a folder of manga/doujinshi page scans into layered PSD files ready to
+hand to a letterer: the original text erased cleanly, and an editable
+Photoshop paragraph text box already sitting in place of each speech
+bubble/caption, pre-filled with placeholder text in a comic lettering font.
+No more hand-drawing a Type tool box over every bubble before you can start
 translating — open the PSD and start typing.
 
-## Output: what's in the PSD
+### Output: what's in the PSD
 
 Every page becomes a PSD with:
 
@@ -35,7 +56,7 @@ Every page becomes a PSD with:
 Every page gets a PSD even if nothing was detected (two identical raster
 layers, no text boxes), so a whole folder converts completely in one pass.
 
-## How it works
+### How it works (fixed pipeline)
 
 The pipeline is three separate tools chained together, each doing the one
 thing it's actually good at:
@@ -71,53 +92,7 @@ manual restoration, not chased automatically.
 (fills, Resynthesizer healing), used only if you explicitly ask for manual
 region work instead of the automatic pipeline above.
 
-## Fonts and editability
-
-The text boxes reference their font (`CCWildWords-Regular`) by **PostScript
-name only** — no font data is embedded in the PSD. Photoshop resolves the
-actual glyphs from fonts installed on whichever machine opens the file. If
-that machine doesn't have CCWildWords installed, Photoshop substitutes a
-fallback font and shows a missing-font warning — the layer is still fully
-editable either way, it just won't *look* right until the real font is
-installed (or you pick a different one).
-
-Photoshop will also show a one-time "update text layer" prompt the first
-time you touch each box. This is normal for any text layer written
-programmatically rather than by Photoshop itself (the raster preview isn't
-pre-rendered) and has no effect on editing.
-
-## Requirements
-
-- Linux with [flatpak GIMP 3](https://flathub.org/apps/org.gimp.GIMP)
-  (`org.gimp.GIMP`). The optional legacy healing actions additionally need
-  the Resynthesizer plugin flatpak.
-- Python 3 with `venv`.
-- Node.js + npm (for the `ag-psd`-based text-layer step).
-- ~100 MB disk for the detection model (downloaded by `setup.sh`).
-- The `CCWildWords-Regular` font installed wherever you'll actually letter
-  the pages in Photoshop, if you want the placeholder text to render
-  correctly instead of falling back.
-
-## Install
-
-```bash
-git clone <this repo> ~/.claude/skills/manga-letterer
-~/.claude/skills/manga-letterer/setup.sh
-```
-
-`setup.sh` creates the Python venv, downloads the ONNX detection model, and
-runs `npm install` for the `ag-psd` dependency. Then in Claude Code, ask to
-clean a folder of pages or invoke `/manga-letterer`. Output goes to a `psd/`
-folder next to the images by default (PSDs, previews, and detection
-artifacts).
-
-If the output folder lives inside an actively-syncing cloud drive
-(Nextcloud, Dropbox, ...), be aware the sync client can race a fresh write
-and revert it to an older version within seconds — verify the result a
-moment after writing, or write to a local, unsynced path first if that
-happens.
-
-## Modular pipeline scripts
+### Modular alternative: incremental PSD building
 
 Alongside the fixed pipeline above, three scripts let you build and extend PSDs
 incrementally, each usable on its own and each accepting a folder or a single
@@ -150,10 +125,58 @@ python scripts/add_cleaned_layer.py <folder-or-psd> [--output <dir>] [--layer-na
 python scripts/add_text_boxes.py <folder-or-psd> [--layer-name Original] [--detect-dir <dir>]
 ```
 
-## Standalone tools
+### Fonts and editability
 
-`tools/` holds general-purpose image/CBR/PDF utilities, independent of the
-manga-letterer skill above. Each is a self-contained CLI script.
+The text boxes reference their font (`CCWildWords-Regular`) by **PostScript
+name only** — no font data is embedded in the PSD. Photoshop resolves the
+actual glyphs from fonts installed on whichever machine opens the file. If
+that machine doesn't have CCWildWords installed, Photoshop substitutes a
+fallback font and shows a missing-font warning — the layer is still fully
+editable either way, it just won't *look* right until the real font is
+installed (or you pick a different one).
+
+Photoshop will also show a one-time "update text layer" prompt the first
+time you touch each box. This is normal for any text layer written
+programmatically rather than by Photoshop itself (the raster preview isn't
+pre-rendered) and has no effect on editing.
+
+### Requirements
+
+- Linux with [flatpak GIMP 3](https://flathub.org/apps/org.gimp.GIMP)
+  (`org.gimp.GIMP`). The optional legacy healing actions additionally need
+  the Resynthesizer plugin flatpak.
+- Python 3 with `venv`.
+- Node.js + npm (for the `ag-psd`-based text-layer steps).
+- ~100 MB disk for the detection model (downloaded by `setup.sh`).
+- The `CCWildWords-Regular` font installed wherever you'll actually letter
+  the pages in Photoshop, if you want the placeholder text to render
+  correctly instead of falling back.
+
+### Install as a skill
+
+```bash
+git clone <this repo> ~/.claude/skills/manga-letterer
+~/.claude/skills/manga-letterer/setup.sh
+```
+
+`setup.sh` creates the Python venv (also covers the standalone `tools/`
+scripts' deps), downloads the ONNX detection model, and runs `npm install`
+for the `ag-psd`/`pngjs` dependencies. Then in Claude Code, ask to clean a
+folder of pages or invoke `/manga-letterer`. Output goes to a `psd/` folder
+next to the images by default (PSDs, previews, and detection artifacts).
+
+If the output folder lives inside an actively-syncing cloud drive
+(Nextcloud, Dropbox, ...), be aware the sync client can race a fresh write
+and revert it to an older version within seconds — verify the result a
+moment after writing, or write to a local, unsynced path first if that
+happens.
+
+---
+
+## Comic archive packaging
+
+`tools/images_to_cbr.py` and `tools/cbr_to_images.py` package and unpack
+`.cbr`/`.cbz` comic archives.
 
 ### tools/images_to_cbr.py
 
@@ -211,8 +234,6 @@ Convert to JPEG and resize images taller than 2500 pixels:
 ```
 python tools/images_to_cbr.py "/path/to/chapter1" --convert-jpeg --max-height 2500
 ```
-
----
 
 ### tools/cbr_to_images.py
 
@@ -276,6 +297,11 @@ python tools/cbr_to_images.py "/path/to/comics" --first-only
 Each archive produces one image file next to itself named `<archive stem>.<ext>` (e.g. `Chapter 01.cbr` → `Chapter 01.jpg`). Combine with `--dry-run` to preview which files would be created.
 
 ---
+
+## PDF & PSD conversion
+
+`tools/pdf_to_images.py` and `tools/psd_to_jpg.py` convert between PDF/PSD
+source files and plain images.
 
 ### tools/pdf_to_images.py
 
@@ -349,8 +375,6 @@ python tools/pdf_to_images.py "/path/to/pdfs" --single-folder --output "/path/to
 ```
 
 To turn extracted images into CBR files, run `tools/images_to_cbr.py` on the folder that contains the image folders.
-
----
 
 ### tools/psd_to_jpg.py
 
@@ -427,6 +451,11 @@ python tools/psd_to_jpg.py "/path/to/psd-files" --limit 5
 
 ---
 
+## Image utilities
+
+`tools/rotate_images.py` and `tools/stretch_pngs.py` are small single-purpose
+image transforms.
+
 ### tools/rotate_images.py
 
 Rotates all images in a folder by a specified number of degrees, overwriting the originals in place.
@@ -466,8 +495,6 @@ python tools/rotate_images.py "/path/to/images" 180
 
 - Images are overwritten in place. Make a backup first if needed.
 - Supported formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.gif`, `.tiff`, `.webp`
-
----
 
 ### tools/stretch_pngs.py
 
@@ -513,10 +540,12 @@ python tools/stretch_pngs.py "/path/to/images" 800 1200
 - Output is written to `<folder>/output` using the original filenames. Existing files with the same names are overwritten.
 - Images are resized with Pillow's high-quality LANCZOS resampling filter.
 
+---
+
 ## Layout
 
 ```
-SKILL.md                        skill instructions (workflow, job format)
+SKILL.md                        manga-letterer skill instructions (workflow, job format)
 scripts/detect_text.py          text detection + erase -> cleaned page, mask, overlay, JSON
 scripts/gimp_clean.py           GIMP 3 batch script -> raster layer assembly, PSD export (fixed pipeline)
 scripts/gimp_base_psd.py        GIMP 3 batch script -> base 2-layer PSD, no cleaning (image_to_psd.py)
@@ -529,5 +558,5 @@ scripts/add_text_boxes.py       CLI: folder/PSD -> native Photoshop paragraph te
 scripts/add_text_layers.mjs     ag-psd script -> native Photoshop paragraph text layers (also used by the fixed pipeline)
 setup.sh                        creates venv + node_modules, installs deps, downloads the ONNX model
 models/, venv/, node_modules/   created by setup.sh (not committed)
-tools/                          general-purpose image/CBR/PDF CLI scripts, independent of the skill
+tools/                          comic archive packaging, PDF/PSD conversion, and image utility scripts
 ```
