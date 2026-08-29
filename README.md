@@ -58,6 +58,14 @@ Every page becomes a PSD with:
 Every page gets a PSD even if nothing was detected (two identical raster
 layers, no text boxes), so a whole folder converts completely in one pass.
 
+#### Example
+
+The same panel through the three layers, bottom to top:
+
+| Original | Cleaned | + Photoshop text boxes |
+| --- | --- | --- |
+| ![Original scan with raw text](examples/066-original.jpg) | ![Text erased, bubbles blank](examples/066-cleaned.jpg) | ![Placeholder text in each box](examples/066-lettered.jpg) |
+
 ### How it works (fixed pipeline)
 
 The pipeline is three separate tools chained together, each doing the one
