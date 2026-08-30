@@ -1,5 +1,5 @@
 {
-  "name": "comic-archive-tools",
+  "name": "comic-ai-tools",
   "private": true,
   "description": "Node deps for scripts/add_text_layers.mjs and scripts/add_cleaned_layer.mjs (append native Photoshop text/raster layers into PSDs via ag-psd).",
   "type": "module",

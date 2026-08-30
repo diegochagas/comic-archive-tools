@@ -1,7 +1,25 @@
+# Generated comic projects (scripts, refs, jobs, work-in-progress renders, output .cbz)
+# — large binary/generated content, not meant for version control.
+projects/
+
+# Lettering pipeline setup output (created by setup.sh)
 venv/
 models/
 tools/tessdata/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# Node
 node_modules/
 package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor/local
+*.swp
+.env
