@@ -23,3 +23,6 @@ Thumbs.db
 # Editor/local
 *.swp
 .env
+
+# Per-job scratch (translation worklists for a specific run)
+tmp_worklists/
