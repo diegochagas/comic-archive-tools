@@ -11,7 +11,9 @@ Two independent halves in one repo:
    the manga-letterer PSD lettering-prep pipeline plus standalone CLI tools
    for CBR/CBZ packaging, PDF/PSD conversion, image utilities and Japanese
    OCR/translation. See the README for docs; `setup.sh` creates its
-   venv/model/node_modules.
+   venv/model/node_modules. Translating raw images/PSDs to PT-BR (text
+   detection -> Original+Copy PSD -> translated Photoshop text boxes) is the
+   `manga-translator-ptbr` skill in `.claude/skills/`.
 
 Current projects: `megaman-nam` (Novas Aventuras de Megaman 17–20 — see
 `projects/megaman-nam/PROJECT.md`).

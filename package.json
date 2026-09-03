@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "ag-psd": "^31.0.2",
+    "canvas": "^3.2.3",
     "pngjs": "^7.0.0"
   }
 }

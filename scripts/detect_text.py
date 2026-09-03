@@ -204,7 +204,12 @@ def detect_page(sess, path, out_dir):
 
 def main():
     out_dir = os.path.join(sys.argv[1], "detect")
-    sess = ort.InferenceSession(MODEL, providers=["CPUExecutionProvider"])
+    # denormal-as-zero: this model's weights produce many denormal floats and
+    # onnxruntime's default (DAZ off) makes one inference ~60x slower (90 s vs
+    # 1.4 s measured 2026-09-03); output is unaffected
+    so = ort.SessionOptions()
+    so.add_session_config_entry("session.set_denormal_as_zero", "1")
+    sess = ort.InferenceSession(MODEL, so, providers=["CPUExecutionProvider"])
     failed = []
     for path in sys.argv[2:]:
         try:
