@@ -42,11 +42,14 @@ const pos = args.filter((a) => !a.startsWith('--'));
 const opt = (name, dflt) => { const i = args.indexOf(name); return i !== -1 ? args[i + 1] : dflt; };
 const [srcPath, blocksPath, outPath] = pos;
 if (!srcPath || !blocksPath || !outPath) {
-  console.error('Usage: node build_translated_psd.mjs <source_image> <blocks.json> <out.psd> [--font NAME] [--no-copy]');
+  console.error('Usage: node build_translated_psd.mjs <source_image> <blocks.json> <out.psd> [--font NAME] [--no-copy] [--copy-image <png>]');
   process.exit(1);
 }
 const FONT_NAME = opt('--font', 'CCWildWords-Regular');
 const WITH_COPY = !args.includes('--no-copy');
+// --copy-image <png>: use this image (e.g. detect_text.py's *_cleaned.png)
+// for the "Copy" layer instead of a pixel-identical duplicate of the source.
+const COPY_IMAGE = opt('--copy-image', null);
 const MIN_FONT = 8;
 
 function hexToRgb(hex) {
@@ -123,10 +126,21 @@ async function main() {
   const texts = blk.texts || [];
   const styles = blk.styles || [];
 
-  const raster = (name) => ({ name, top: 0, left: 0, bottom: H, right: W,
-    imageData: { data: px, width: W, height: H } });
+  const raster = (name, pixels = px) => ({ name, top: 0, left: 0, bottom: H, right: W,
+    imageData: { data: pixels, width: W, height: H } });
   const children = [raster('Original')];
-  if (WITH_COPY) children.push(raster('Copy'));
+  if (WITH_COPY) {
+    let copyPx = px;
+    if (COPY_IMAGE) {
+      const cimg = await loadImage(COPY_IMAGE);
+      if (cimg.width !== W || cimg.height !== H)
+        throw new Error(`--copy-image ${cimg.width}x${cimg.height} != source ${W}x${H}`);
+      const cc = createCanvas(W, H); const cx = cc.getContext('2d'); cx.drawImage(cimg, 0, 0);
+      const cd = cx.getImageData(0, 0, W, H).data;
+      copyPx = new Uint8Array(cd.buffer, cd.byteOffset, cd.byteLength);
+    }
+    children.push(raster('Copy', copyPx));
+  }
 
   boxes.forEach(([x, y, w, h], i) => {
     const st = styles[i] || {};

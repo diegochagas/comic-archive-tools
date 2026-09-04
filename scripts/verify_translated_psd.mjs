@@ -11,11 +11,21 @@ import { createCanvas, loadImage } from 'canvas';
 initializeCanvas(createCanvas);
 const [psdPath, srcPath, blocksPath] = process.argv.slice(2);
 const full = process.argv.includes('--full');
+// --copy-image <png>: Copy is expected to match this image instead of the source
+const ci = process.argv.indexOf('--copy-image');
+const COPY_IMAGE = ci !== -1 ? process.argv[ci + 1] : null;
 
 const img = await loadImage(srcPath);
 const c = createCanvas(img.width, img.height);
 c.getContext('2d').drawImage(img, 0, 0);
 const src = c.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+let copySrc = src;
+if (COPY_IMAGE) {
+  const ci2 = await loadImage(COPY_IMAGE);
+  const cc = createCanvas(ci2.width, ci2.height);
+  cc.getContext('2d').drawImage(ci2, 0, 0);
+  copySrc = cc.getContext('2d').getImageData(0, 0, ci2.width, ci2.height).data;
+}
 
 const psd = readPsd(fs.readFileSync(psdPath), { skipCompositeImageData: true, skipThumbnail: true });
 const blocks = JSON.parse(fs.readFileSync(blocksPath, 'utf8'));
@@ -27,11 +37,12 @@ for (const name of ['Original', 'Copy']) {
   if (!L) { problems.push(`missing layer ${name}`); continue; }
   if (!L.canvas || L.canvas.width !== img.width || L.canvas.height !== img.height) { problems.push(`${name}: bad size`); continue; }
   const d = L.canvas.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+  const ref = name === 'Copy' ? copySrc : src;
   const step = full ? 1 : 997;             // sample every 997th pixel unless --full
   let diff = 0, n = 0;
   for (let i = 0; i < d.length; i += 4 * step) {
     n++;
-    if (d[i] !== src[i] || d[i + 1] !== src[i + 1] || d[i + 2] !== src[i + 2]) diff++;
+    if (d[i] !== ref[i] || d[i + 1] !== ref[i + 1] || d[i + 2] !== ref[i + 2]) diff++;
   }
   if (diff) problems.push(`${name}: ${diff}/${n} sampled pixels differ from source`);
 }
@@ -46,4 +57,4 @@ texts.forEach((l, i) => {
 });
 
 if (problems.length) { console.log(`FAIL ${psdPath}\n  ` + problems.join('\n  ')); process.exit(1); }
-console.log(`OK ${psdPath}: ${psd.width}x${psd.height}, Original+Copy pixel-exact (${full ? 'full' : 'sampled'}), ${texts.length} text layers`);
+console.log(`OK ${psdPath}: ${psd.width}x${psd.height}, Original+Copy pixel-exact${COPY_IMAGE ? ' (Copy=cleaned)' : ''} (${full ? 'full' : 'sampled'}), ${texts.length} text layers`);
